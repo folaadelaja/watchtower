@@ -1,0 +1,60 @@
+#cloud-config
+hostname: sentinel-scanner
+manage_etc_hosts: true
+users:
+  - name: scanner
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - REPLACE_WITH_YOUR_PUBLIC_SSH_KEY
+ssh_pwauth: false
+disable_root: true
+package_update: true
+packages:
+  - qemu-guest-agent
+  - docker.io
+  - docker-compose-v2
+  - curl
+  - ca-certificates
+  - jq
+  - python3-venv
+  - nmap
+  - git
+write_files:
+  - path: /etc/systemd/system/scanner-engine-bootstrap.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Initialize vulnerability scanner engine
+      After=network-online.target docker.service
+      Wants=network-online.target
+      Requires=docker.service
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/scanner-engine-bootstrap
+      RemainAfterExit=yes
+      TimeoutStartSec=3600
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/sbin/scanner-engine-bootstrap
+    permissions: '0750'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      install -d -m 750 /opt/sentinel/engine
+      cd /opt/sentinel/engine
+      if [ ! -f compose.yaml ]; then
+        curl --fail --location --retry 3 --output compose.yaml.tmp https://greenbone.github.io/docs/latest/_static/compose.yaml
+        mv compose.yaml.tmp compose.yaml
+      fi
+      docker compose config --quiet
+      docker compose pull
+      docker compose up -d
+      touch /opt/sentinel/engine/containers-started
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent]
+  - [systemctl, enable, --now, docker]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, --no-block, scanner-engine-bootstrap.service]
